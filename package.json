@@ -1,0 +1,22 @@
+{
+  "name": "opencode2-usage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "web": "bun run web/server.ts",
+    "verify": "bun verify/run.ts",
+    "reconcile": "bun verify/opendesign.ts",
+    "rates": "bun verify/rates.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/luxon": "3.7.1",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "luxon": "3.6.1"
+  }
+}
