@@ -1312,6 +1312,8 @@ function buildSeries(
         p50TTFT: null,
         p95TTFT: null,
         avgTPS: null,
+        p50TPS: null,
+        p95TPS: null,
       }
     return {
       day: at.key,
@@ -1328,6 +1330,8 @@ function buildSeries(
       p50TTFT: percentile(current.ttfts, 0.5),
       p95TTFT: percentile(current.ttfts, 0.95),
       avgTPS: average(current.tpss),
+      p50TPS: percentile(current.tpss, 0.5),
+      p95TPS: percentile(current.tpss, 0.95),
     }
   })
 }
@@ -1399,6 +1403,7 @@ function buildRoundSeries(
         rounds: 0,
         roundMsP50: null,
         roundMsP95: null,
+        roundMsAvg: null,
         errors: 0,
         timeouts: 0,
         retries: 0,
@@ -1410,6 +1415,7 @@ function buildRoundSeries(
       rounds: bucket.rounds,
       roundMsP50: percentile(bucket.durations, 0.5),
       roundMsP95: percentile(bucket.durations, 0.95),
+      roundMsAvg: average(bucket.durations),
       errors: bucket.errors,
       timeouts: bucket.timeouts,
       retries: bucket.retries,

@@ -310,7 +310,7 @@ All responses are JSON. Every endpoint accepts `since` (`24h`, `7d`, `30d`, `90d
 | Endpoint | Filters | What it returns |
 | --- | --- | --- |
 | `GET /api/meta` | `since`, `includeInternal` | Resolved paths, sidecar existence, raw recorded-call count and first/last timestamps, plus the `capabilities` route list |
-| `GET /api/overview` | `since`, `includeInternal`, `tz`, `granularity`, `model` | Recorded-call totals, round aggregates, sidecar aggregates, per-day series (cost, tokens, calls), per-model breakdown |
+| `GET /api/overview` | `since`, `includeInternal`, `tz`, `granularity`, `model` | Recorded-call totals, round aggregates, sidecar aggregates, per-day series (cost, tokens, calls, TTFT/TPS percentiles, round duration, errors), per-model breakdown |
 | `GET /api/sessions` | `since`, `includeInternal`, `tz`, `q`, `model`, `limit`, `sort`, `dir` | Per-session recorded-call totals: calls, tokens, cost, latency, latest call time |
 | `GET /api/turns` | `since`, `includeInternal`, `session`, `model`, `status`, `onlyErrors`, `limit`, `offset`, `sort`, `dir` | Rounds plus paging `total` |
 | `GET /api/errors` | `since`, `includeInternal`, `source` (`all\|call\|turn`), `model` | Errors grouped by type and source, count descending |
@@ -329,7 +329,7 @@ Overview `totals` contains `calls`, `sessions` (distinct sessions with a matchin
 
 **One round rule applies everywhere the page shows rounds:** a round is listed and counted only when at least one of its linked recorded calls is inside the window (and matches the model where the endpoint accepts one). This applies to `/api/turns`, the overview `rounds` block, `roundSeries`, session detail rounds, the turn drill-down, and the round source of `/api/errors` and `errorSeries`. A round whose calls all fall outside the window is excluded even when the round itself started inside it; a round that started before the window but has a call inside it is included.
 
-Round durations, queue waits, and first-token times are milliseconds or `null`, computed by `src/query.ts` (`queueMs`, `roundMs`, `firstTokenMs`). A `running` round older than one hour is returned as `stale`. Round `calls`, `costUSD`, and tokens come from matching call rows sharing its `turn_id`. `series` uses recorded calls for cost, tokens, calls, sessions, and latency; `roundSeries` adds `{ date, rounds, roundMsP50, roundMsP95, errors, timeouts, retries, cost }`; `errorSeries` adds `{ date, call, turn }` for the stacked error chart. Errors group inactivity interruptions as `provider.timeout` and use the call/round end time for the window.
+Round durations, queue waits, and first-token times are milliseconds or `null`, computed by `src/query.ts` (`queueMs`, `roundMs`, `firstTokenMs`). A `running` round older than one hour is returned as `stale`. Round `calls`, `costUSD`, and tokens come from matching call rows sharing its `turn_id`. `series` uses recorded calls for cost, tokens, calls, sessions, and latency (`avgTTFT`, `p50TTFT`, `p95TTFT`, `avgTPS`, `p50TPS`, `p95TPS`); `roundSeries` adds `{ date, rounds, roundMsAvg, roundMsP50, roundMsP95, errors, timeouts, retries, cost }`; `errorSeries` adds `{ date, call, turn }` for the two error lines. Errors group inactivity interruptions as `provider.timeout` and use the call/round end time for the window.
 
 The page has three views, switched from the top bar and reflected in the URL as `view`: **Usage** (everything above), **Providers**, and **Rates**.
 
@@ -475,7 +475,7 @@ A provider's status is one of `ok`, `unsupported` (no API to read), `missing` (n
 
 The page writes its view to the URL (`since`, `q`, `model`, sorts, call/round paging offsets, round status, errors-only, error source, the `view`, the selected `provider` tab, and the open `session` or `turn` panel), so views are linkable and the back button works. Internal-test rows only appear when the checkbox is enabled, and are marked `test`. When the sidecar is missing or empty, a banner states that every metric comes from recorded calls.
 
-The dashboard groups KPI cards into volume, latency, and rounds sections; adds round-duration (p50/p95) and errors-per-day (stacked call/round) charts; adds a sortable, status-filtered, paged Rounds table with a call drill panel; adds a grouped Errors table with relative-count bars; and shows each session's rounds above its calls in the session drill panel. Charts are hand-drawn inline SVG with exact values in `<title>` elements.
+The dashboard groups KPI cards into volume, latency, and rounds sections; adds round-duration (avg/p50/p95) and errors-per-day (call and round lines) charts; makes each line chart legend clickable so a series can be hidden or shown without leaving the page; adds a sortable, status-filtered, paged Rounds table with a call drill panel; adds a grouped Errors table with relative-count bars; and shows each session's rounds above its calls in the session drill panel. Charts are hand-drawn inline SVG with exact values in `<title>` elements.
 
 ### Plan pricing
 

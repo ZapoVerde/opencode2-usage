@@ -167,6 +167,7 @@ type Overview = {
     rounds: number
     roundMsP50: number | null
     roundMsP95: number | null
+    roundMsAvg: number | null
     errors: number
     timeouts: number
     retries: number
@@ -262,6 +263,7 @@ describe("round aggregates", () => {
       rounds: 1,
       roundMsP50: 30_000,
       roundMsP95: 30_000,
+      roundMsAvg: 30_000,
       errors: 0,
       timeouts: 0,
       retries: 0,

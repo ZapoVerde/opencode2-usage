@@ -83,6 +83,9 @@ const TIME_ZONE = (() => {
 
 const namespaceSource = document.querySelector("#svg-namespace svg")
 const SVG_NAMESPACE = namespaceSource ? namespaceSource.namespaceURI : ""
+// Chart legends toggle a line without a round trip: the choice lives with the
+// chart element so it survives a refresh of the same view.
+const hiddenChartLines = new WeakMap()
 
 const sinceSelect = document.getElementById("since")
 const granularityGroup = document.getElementById("granularity")
@@ -816,11 +819,11 @@ function renderOverview(overview) {
 
   costCaption.textContent = `· window total ${formatCost(totals.costUSD)}`
   tokensCaption.textContent = "· all billed tokens, cache included"
-  ttftCaption.textContent = "· p50 and p95 from recorded calls"
-  tpsCaption.textContent = "· average from recorded calls"
-  roundCaption.textContent = `· ${formatInt(rounds.total)} rounds · p50 / p95 of completed rounds`
+  ttftCaption.textContent = "· avg / p50 / p95 from recorded calls"
+  tpsCaption.textContent = "· avg / p50 / p95 from recorded calls"
+  roundCaption.textContent = `· ${formatInt(rounds.total)} rounds · avg / p50 / p95 of completed rounds`
   const errorTotal = (overview.errorSeries ?? []).reduce((total, point) => total + point.call + point.turn, 0)
-  errorCaption.textContent = `· ${formatInt(errorTotal)} errors · calls and rounds`
+  errorCaption.textContent = `· ${formatInt(errorTotal)} errors · calls and rounds shown separately`
   populateModels(overview.models)
   renderCharts(overview)
 }
@@ -2677,6 +2680,7 @@ function renderCharts(overview) {
     chartTtft,
     series,
     [
+      { key: "avgTTFT", className: "line-avg", label: "avg", format: formatDuration },
       { key: "p50TTFT", className: "line-p50", label: "p50", format: formatDuration },
       { key: "p95TTFT", className: "line-p95", label: "p95", format: formatDuration },
     ],
@@ -2686,7 +2690,11 @@ function renderCharts(overview) {
   renderLineChart(
     chartTps,
     series,
-    [{ key: "avgTPS", className: "line-tps", label: "avg TPS", format: formatTPS }],
+    [
+      { key: "avgTPS", className: "line-avg", label: "avg", format: formatTPS },
+      { key: "p50TPS", className: "line-p50", label: "p50", format: formatTPS },
+      { key: "p95TPS", className: "line-p95", label: "p95", format: formatTPS },
+    ],
     (value) => String(Math.round(value)),
     "No TPS recorded in this window.",
   )
@@ -2695,6 +2703,7 @@ function renderCharts(overview) {
     chartRounds,
     roundSeries,
     [
+      { key: "roundMsAvg", className: "line-avg", label: "avg", format: exactDuration },
       { key: "roundMsP50", className: "line-p50", label: "p50", format: exactDuration },
       { key: "roundMsP95", className: "line-p95", label: "p95", format: exactDuration },
     ],
@@ -2702,7 +2711,19 @@ function renderCharts(overview) {
     "No completed rounds in this window.",
   )
   const errorSeries = (overview.errorSeries ?? []).map((point) => ({ ...point, day: point.date }))
-  renderErrorChart(chartErrors, errorSeries)
+  const errorTotal = errorSeries.reduce((total, point) => total + point.call + point.turn, 0)
+  if (errorTotal <= 0) chartEmpty(chartErrors, "No errors recorded in this window.")
+  else
+    renderLineChart(
+      chartErrors,
+      errorSeries,
+      [
+        { key: "call", className: "line-call-error", label: "calls", format: formatInt },
+        { key: "turn", className: "line-turn-error", label: "rounds", format: formatInt },
+      ],
+      (value) => String(Math.round(value)),
+      "No errors recorded in this window.",
+    )
 }
 
 function renderCostChart(container, series) {
@@ -2779,73 +2800,56 @@ function renderTokenChart(container, series) {
   drawXAxis(svg, frame, series, (index) => left + band * index + band / 2)
 }
 
-function renderErrorChart(container, series) {
-  const frame = chartFrame(container, series, "No errors recorded in this window.", 30)
-  if (frame === null) return
-  const keys = [
-    { key: "call", className: "bar-call-error", label: "calls" },
-    { key: "turn", className: "bar-turn-error", label: "rounds" },
-  ]
-  const totals = series.map((point) => point.call + point.turn)
-  const max = Math.max(...totals, 0)
-  if (max <= 0) {
-    chartEmpty(container, "No errors recorded in this window.")
-    return
-  }
-  const yMax = Math.max(1, max)
-  const { svg, width, left, right, top, plotHeight } = frame
-  drawGrid(svg, frame, yMax, (value) => String(Math.round(value)), yMax <= 6 ? yMax : 4)
-  drawLegend(svg, left, 12, keys.map((key) => ({ className: key.className, label: key.label })))
-  const band = (width - left - right) / series.length
-  const barWidth = Math.min(52, Math.max(1, band * 0.72))
-  series.forEach((point, index) => {
-    let base = 0
-    for (const key of keys) {
-      const value = point[key.key]
-      if (!(value > 0)) continue
-      const barHeight = (value / yMax) * plotHeight
-      const x = left + band * index + (band - barWidth) / 2
-      const rect = svgNode("rect", {
-        x,
-        y: top + plotHeight - base - barHeight,
-        width: barWidth,
-        height: Math.max(0.5, barHeight),
-        class: key.className,
-      })
-      rect.append(
-        svgNode(
-          "title",
-          {},
-          `${point.day} · ${key.label} ${value} · call ${point.call} · round ${point.turn} · total ${totals[index]}`,
-        ),
-      )
-      svg.append(rect)
-      base += barHeight
-    }
-  })
-  drawXAxis(svg, frame, series, (index) => left + band * index + band / 2)
-}
-
 function renderLineChart(container, series, lines, formatY, emptyMessage) {
   const frame = chartFrame(container, series, emptyMessage, 30)
   if (frame === null) return
+  const hidden = hiddenLinesFor(container)
+  const visibleLines = lines.filter((line) => !hidden.has(line.key))
   const values = []
   for (const point of series)
-    for (const line of lines) {
+    for (const line of visibleLines) {
       const value = point[line.key]
       if (typeof value === "number" && Number.isFinite(value)) values.push(value)
     }
-  if (values.length === 0) {
+  const hasData = values.length > 0
+  if (!hasData && hidden.size === 0) {
     chartEmpty(container, emptyMessage)
     return
   }
   const max = Math.max(...values, 0)
   const yMax = max > 0 ? max * 1.15 : 1
   const { svg, left, right, top, plotWidth, plotHeight } = frame
-  drawGrid(svg, frame, yMax, formatY)
-  drawLegend(svg, left, 12, lines.map((line) => ({ className: line.className, label: line.label })))
   const xAxis = (index) => (series.length === 1 ? left + plotWidth / 2 : left + (plotWidth * index) / (series.length - 1))
-  for (const line of lines) {
+  drawGrid(svg, frame, yMax, formatY)
+  drawLegend(
+    svg,
+    left,
+    12,
+    lines.map((line) => ({
+      className: line.className,
+      label: line.label,
+      hidden: hidden.has(line.key),
+      onToggle: () => {
+        if (hidden.has(line.key)) hidden.delete(line.key)
+        else hidden.add(line.key)
+        renderLineChart(container, series, lines, formatY, emptyMessage)
+      },
+    })),
+  )
+  if (!hasData) {
+    svg.append(
+      svgNode(
+        "text",
+        { x: left + plotWidth / 2, y: top + plotHeight / 2, class: "chart-label", "text-anchor": "middle" },
+        visibleLines.length === 0
+          ? "All series hidden. Click a legend to show one."
+          : "No data for the visible series. Click a legend to change it.",
+      ),
+    )
+    drawXAxis(svg, frame, series, xAxis)
+    return
+  }
+  for (const line of visibleLines) {
     let path = ""
     let penDown = false
     const points = []
@@ -2867,6 +2871,14 @@ function renderLineChart(container, series, lines, formatY, emptyMessage) {
     for (const circle of points) svg.append(circle)
   }
   drawXAxis(svg, frame, series, xAxis)
+}
+
+function hiddenLinesFor(container) {
+  const existing = hiddenChartLines.get(container)
+  if (existing !== undefined) return existing
+  const created = new Set()
+  hiddenChartLines.set(container, created)
+  return created
 }
 
 function keyTotal(point, keys) {
@@ -2981,8 +2993,25 @@ function axisLabel(point) {
 function drawLegend(svg, x, y, entries) {
   let offset = x
   for (const entry of entries) {
-    svg.append(svgNode("rect", { x: offset, y: y - 6, width: 8, height: 8, rx: 1, class: entry.className }))
-    svg.append(svgNode("text", { x: offset + 12, y: y + 3, class: "chart-legend" }, entry.label))
+    const group = svgNode("g", {
+      class: entry.onToggle ? "chart-legend-entry chart-legend-toggle" : "chart-legend-entry",
+      role: entry.onToggle ? "button" : undefined,
+      tabindex: entry.onToggle ? "0" : undefined,
+      "aria-pressed": entry.onToggle ? String(!entry.hidden) : undefined,
+    })
+    if (entry.onToggle) {
+      group.append(svgNode("title", {}, `Click to ${entry.hidden ? "show" : "hide"} ${entry.label}`))
+      group.addEventListener("click", entry.onToggle)
+      group.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return
+        event.preventDefault()
+        entry.onToggle()
+      })
+    }
+    const swatch = svgNode("rect", { x: offset, y: y - 6, width: 8, height: 8, rx: 1, class: entry.className })
+    group.append(swatch, svgNode("text", { x: offset + 12, y: y + 3, class: "chart-legend" }, entry.label))
+    if (entry.hidden) group.classList.add("is-hidden")
+    svg.append(group)
     offset += 16 + entry.label.length * 6.2
   }
 }
@@ -2994,7 +3023,10 @@ function chartEmpty(container, message) {
 
 function svgNode(tag, attributes, text) {
   const node = document.createElementNS(SVG_NAMESPACE, tag)
-  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value))
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value === undefined) continue
+    node.setAttribute(key, String(value))
+  }
   if (text !== undefined) node.textContent = text
   return node
 }

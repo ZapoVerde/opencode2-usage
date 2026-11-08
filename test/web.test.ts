@@ -193,12 +193,15 @@ type Overview = {
     p50TTFT: number | null
     p95TTFT: number | null
     avgTPS: number | null
+    p50TPS: number | null
+    p95TPS: number | null
   }>
   roundSeries: Array<{
     date: string
     rounds: number
     roundMsP50: number | null
     roundMsP95: number | null
+    roundMsAvg: number | null
     errors: number
     timeouts: number
     retries: number
@@ -390,6 +393,8 @@ describe("per-day series", () => {
       p50TTFT: 300,
       p95TTFT: 300,
       avgTPS: 30,
+      p50TPS: 30,
+      p95TPS: 30,
     })
   })
 
