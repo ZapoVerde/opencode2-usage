@@ -728,20 +728,6 @@ function renderMeta(meta, stale) {
     banner.hidden = false
     banner.className = "banner banner-warn"
     banner.textContent = `Sidecar is empty: ${sidecar.path} has no recorded calls yet. Every metric on this page comes from recorded calls.`
-  } else if ((meta.imputedCostUSD ?? 0) > 0 || (meta.unpricedCalls ?? 0) > 0) {
-    // Calls are priced on their plan's own card, which is not always OpenCode's
-    // recorded table. Say how much that moved the total, and what could not be
-    // priced at all.
-    banner.hidden = false
-    banner.className = "banner banner-info"
-    const parts = []
-    if ((meta.imputedCostUSD ?? 0) > 0)
-      parts.push(`$${formatMoney(meta.imputedCostUSD)} more than OpenCode recorded, from the plan's own rates`)
-    if ((meta.unpricedCalls ?? 0) > 0)
-      parts.push(
-        `${meta.unpricedCalls} calls kept OpenCode's recorded price because the plan publishes no rate for that model`,
-      )
-    banner.textContent = `Totals include adjusted cost: ${parts.join("; ")}.`
   } else {
     banner.hidden = true
   }

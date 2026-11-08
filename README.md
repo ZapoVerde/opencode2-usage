@@ -453,12 +453,7 @@ Three rules keep this honest:
 - **A zero is only filled when the call moved tokens.** A zero on a call with no tokens is a real zero — an aborted step — and stays zero. A `null` cost is "never priced" (failed calls) and also stays.
 - **Only a model the plans file prices is repriced.** Anything else keeps its recorded value and is counted in `unpricedCalls`, so a total can say it is short rather than imply completeness.
 
-`/api/meta` reports `imputedCostUSD` (the net change from repricing) and `unpricedCalls`, and the page shows a banner naming both, so an adjusted total is never mistaken for a raw one:
-
-```txt
-Totals include adjusted cost: $7.30 more than OpenCode recorded, from the
-plan's own rates; 0 calls carrying tokens could not be priced.
-```
+`/api/meta` reports `imputedCostUSD` (the net change from repricing) and `unpricedCalls` for anyone reading the API directly. The page does not show a banner for them: repriced totals are the normal reading, and the per-call and per-plan figures already carry the adjustment.
 
 Two smaller cases are labelled rather than guessed:
 

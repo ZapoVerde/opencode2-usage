@@ -429,12 +429,6 @@ main {
   background: rgba(251, 191, 36, 0.08);
 }
 
-/* Informational: totals were adjusted, but nothing is broken. */
-.banner-info {
-  border-color: rgba(96, 165, 250, 0.4);
-  background: rgba(96, 165, 250, 0.07);
-}
-
 .error {
   margin-bottom: 16px;
   padding: 11px 14px;
