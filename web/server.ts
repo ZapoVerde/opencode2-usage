@@ -21,6 +21,9 @@ import { advertisedPlan } from "../src/allowances"
 import { advertisedQuota, emptyQuotas, type ModelSpend } from "../src/quota-view"
 import type { AdvertisedQuota, ProviderQuotaStatus, QuotasResponse, QuotaWindow as QuotaWindowStatus } from "../src/quotas"
 import { handleApi, type WebSnapshot } from "./api"
+import { normaliseCookies, sameCookies, type StoredCookie } from "../src/od-session"
+import { clearSession, loadSession, resolveSessionPath, saveSession } from "../src/od-store"
+import { readOpenDesign } from "../src/od-source"
 
 type ServerOptions = {
   readonly port: number
@@ -97,11 +100,12 @@ console.log(`authoritative: ${startup.sessionsPath ?? "(not found)"}`)
 console.log(`plans:      ${startup.plansPath}${startup.plansExists ? "" : " (not found; plan spend hidden)"}`)
 
 async function requestHandler(request: Request) {
-  if (request.method !== "GET") return json({ error: "method not allowed" }, 405)
   const url = new URL(request.url)
   // Provider status needs network I/O and a cache, so it bypasses the pure
   // in-memory API dispatcher.
   if (url.pathname === "/api/quotas") return json(await quotasResponse(options), 200)
+  if (url.pathname === "/api/opendesign/session") return openDesignSessionRoute(request, options)
+  if (request.method !== "GET") return json({ error: "method not allowed" }, 405)
   if (url.pathname.startsWith("/api/")) {
     try {
       const result = handleApi(
@@ -141,7 +145,7 @@ async function quotasResponse(options: ServerOptions): Promise<QuotasResponse> {
   const file = sources.sessionsPath
   if (file === null) return emptyQuotas()
 
-  const key = `${databaseKey(file)}|${fileKey(sources.sidecarPath)}|${QUOTA_TTL_MS}`
+  const key = `${databaseKey(file)}|${fileKey(sources.sidecarPath)}|${quotaKey(sources.openDesignSessionPath)}|${QUOTA_TTL_MS}`
   if (quotaCache !== null && quotaCache.key === key && Date.now() - quotaCache.loadedAt < QUOTA_TTL_MS)
     return quotaCache.value
   if (quotaInflight !== null) return quotaInflight
@@ -152,7 +156,10 @@ async function quotasResponse(options: ServerOptions): Promise<QuotasResponse> {
     // The same plan-card repricing the Usage tab uses, so "This machine" and the
     // credits figure are in the same unit and can be compared directly.
     const calls = alignCosts(recorded, loadPlans(sources.plansPath).plans).calls
-    const results = await readQuotas({ credentials })
+    const results = await readQuotas({
+      credentials,
+      openDesign: openDesignSource(sources.openDesignSessionPath),
+    })
     const advertised = buildAdvertised(results, calls)
     const value: QuotasResponse = { fetchedAt: Date.now(), results, aliases: PROVIDER_ALIASES, advertised }
     quotaCache = { key, loadedAt: Date.now(), value }
@@ -164,13 +171,117 @@ async function quotasResponse(options: ServerOptions): Promise<QuotasResponse> {
 }
 
 /**
+ * True when the request came from this page or from no page at all.
+ *
+ * A browser does not send `Origin` on a same-origin GET, and it cannot remove it
+ * from a cross-origin POST, so a present-but-foreign origin is the only signal
+ * needed. A non-browser client sends none and is already limited by the
+ * loopback bind.
+ */
+function sameOrigin(request: Request) {
+  const origin = request.headers.get("origin")
+  if (origin === null) return true
+  const host = request.headers.get("host")
+  if (host === null) return false
+  try {
+    return new URL(origin).host === host
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The stored OpenDesign session, in the shape `readQuotas` wants.
+ *
+ * Rotation is written back only when the cookie values actually changed, so a
+ * page that polls every minute does not rewrite the file each time.
+ */
+function openDesignSource(file: string) {
+  const session = loadSession(file)
+  if (session === null) return undefined
+  return {
+    cookies: session.cookies,
+    onRotate: (cookies: readonly StoredCookie[]) => {
+      if (sameCookies(session.cookies, cookies)) return
+      saveSession(file, { cookies, confirmedAt: Date.now(), account: session.account })
+    },
+  }
+}
+
+/**
+ * Connect, check, or disconnect the OpenDesign console session.
+ *
+ * This is the one write route on an otherwise read-only dashboard, because
+ * OpenDesign's account API has no key-based access: the only credential that
+ * reads the credit windows is the cookie a signed-in browser holds, and there
+ * is nowhere else to put it. The route is loopback-only by the server's own
+ * host rule, refuses cross-origin callers, and stores the cookie 0600 beside the
+ * sidecar. A `DELETE` removes it.
+ */
+async function openDesignSessionRoute(request: Request, options: ServerOptions) {
+  const file = resolveSessionPath(options.db ?? process.env.OPENCODE_USAGE_DB ?? defaultDatabasePath())
+  if (!sameOrigin(request)) return json({ error: "cross-origin request refused" }, 403)
+
+  if (request.method === "DELETE") {
+    clearSession(file)
+    quotaCache = null
+    return json({ connected: false }, 200)
+  }
+  if (request.method === "GET") {
+    const session = loadSession(file)
+    return json(
+      {
+        connected: session !== null,
+        account: session?.account ?? null,
+        confirmedAt: session?.confirmedAt ?? null,
+      },
+      200,
+    )
+  }
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405)
+
+  const body = (await request.json().catch(() => null)) as unknown
+  const raw = body !== null && typeof body === "object" && "session" in body ? body.session : body
+
+  let cookies
+  try {
+    cookies = normaliseCookies(raw)
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "That session could not be read" }, 400)
+  }
+
+  // Probe before storing: a cookie that cannot read the console is not a
+  // session, and telling you now is better than a dashboard that says
+  // "connected" while every window shows an error.
+  const reading = await readOpenDesign(cookies)
+  if (reading.status.state !== "ok") {
+    return json(
+      {
+        connected: false,
+        error: reading.status.state === "error" ? reading.status.reason : "The session could not be verified",
+      },
+      400,
+    )
+  }
+
+  const final = reading.rotated ?? cookies
+  saveSession(file, {
+    cookies: final,
+    confirmedAt: Date.now(),
+    account: reading.status.account,
+  })
+  quotaCache = null
+  return json({ connected: true, account: reading.status.account }, 200)
+}
+
+/**
  * Advertised allowance per integration, with this machine's spend inside each of
  * that provider's quota windows.
  *
  * Windows come from the provider: Go resets on its own schedule, and OpenDesign
  * runs a rolling 5-hour and a 7-day window anchored to the subscription. The
- * reset times that Go reports are used directly, so the spend shown matches the
- * period the percentage covers.
+ * reset times the provider reports are used directly, so the spend shown matches
+ * the period the percentage covers.
  */
 function buildAdvertised(
   results: Readonly<Record<string, ProviderQuotaStatus>>,
@@ -199,13 +310,22 @@ function buildAdvertised(
   return advertised
 }
 
-/** The start of the widest window, from the upstream's own reset time. */
+/**
+ * The start of the widest window the provider reports.
+ *
+ * Go publishes an explicit monthly reset. OpenDesign publishes only the two
+ * Design Plan windows (5 hours and 7 days), so the widest one it reports is the
+ * weekly window and its reset is seven days after the window opened.
+ */
 function widestWindow(plan: ReturnType<typeof advertisedPlan>, live: readonly QuotaWindowStatus[]) {
   const monthly = live.find((window) => window.id === "monthly")
-  if (monthly?.resetsAt == null) return null
   // Go reports the monthly reset; its window is one month long.
-  const days = plan?.providerID === "opencode" ? 31 : 30
-  return monthly.resetsAt - days * 86_400_000
+  if (monthly?.resetsAt != null) return monthly.resetsAt - (plan?.providerID === "opencode" ? 31 : 30) * 86_400_000
+  const weekly = live.find((window) => window.id === "weekly")
+  if (weekly?.resetsAt != null) return weekly.resetsAt - 7 * 86_400_000
+  const rolling = live.find((window) => window.id === "rolling")
+  if (rolling?.resetsAt != null) return rolling.resetsAt - 5 * 3_600_000
+  return null
 }
 
 function modelSpend(calls: readonly CallRow[]): ModelSpend[] {
@@ -274,6 +394,7 @@ type SnapshotSources = {
   readonly sessionsSource: "flag" | "env" | "scan" | null
   readonly sessionsResolveError: string | null
   readonly plansPath: string
+  readonly openDesignSessionPath: string
 }
 
 // Every number on the dashboard comes from recorded calls and rounds. The
@@ -365,6 +486,7 @@ function resolveSources(options: ServerOptions): SnapshotSources {
     sessionsSource: selection.ok ? selection.source : null,
     sessionsResolveError: selection.ok ? null : selection.message,
     plansPath: resolvePlansPath(options, sidecarPath),
+    openDesignSessionPath: resolveSessionPath(sidecarPath),
   }
 }
 
@@ -479,6 +601,11 @@ function fileKey(file: string) {
   } catch {
     return "-"
   }
+}
+
+/** The session file is part of the cache key: connecting must invalidate a cached status. */
+function quotaKey(file: string) {
+  return fileKey(file)
 }
 
 function readSidecar(

@@ -17,7 +17,7 @@ const VIEWS = ["usage", "providers", "rates"]
 // newer tab is unavailable on an older server.
 const VIEW_ENDPOINTS = {
   usage: ["overview", "sessions", "calls", "turns", "errors", "pivot", "heatmap"],
-  providers: ["providers", "quotas"],
+  providers: ["providers", "quotas", "opendesign-session"],
   rates: ["rates"],
 }
 const RESTART_HINT = "Restart it (bun run web, or docker restart opencode2-usage) to load the current version."
@@ -1065,6 +1065,11 @@ function renderProviders(response, quotas) {
   if (problems !== null) page.append(problems)
   if (rows.length === 0) {
     page.append(element("p", "provider-empty", "No recorded calls in this window."))
+    // Connecting the OpenDesign console must not need a recorded call first: a
+    // fresh install should be able to sign in and see the caps.
+    const empty = element("div", "provider-detail")
+    empty.append(emptyOpenDesignCard())
+    page.append(empty)
     return
   }
 
@@ -1438,8 +1443,18 @@ function providerStatus(providerID) {
   node.append(element("div", "provider-bucket-title", "Live status"))
 
   if (status !== undefined) {
-    if (status.state !== "ok") {
-      // With published limits but no usage API, only the percentages are
+    // OpenDesign's own connect card says what to do when it has no session, so
+    // repeating "missing" as a live-status note would only duplicate it.
+    const explained = integration === "opendesign" && status.state === "missing"
+    if (status.state === "ok") {
+      const facts = []
+      if (status.plan !== null) facts.push(`Plan: ${status.plan}`)
+      if (status.account !== null) facts.push(status.account)
+      facts.push(...status.notes)
+      if (facts.length > 0) node.append(element("p", "provider-status-note", facts.join(" · ")))
+      for (const budget of status.budgets) node.append(budgetMeter(budget))
+    } else if (!explained) {
+      // With published limits but no readable API, only the percentages are
       // missing; the allowance below is still real.
       const note =
         advertised === undefined
@@ -1447,18 +1462,161 @@ function providerStatus(providerID) {
           : `${status.reason}. Live percentages are unavailable, so the caps below are published limits only.`
       node.append(element("p", "provider-status-note", note))
       if (advertised === undefined) return node
-    } else {
-      const facts = []
-      if (status.plan !== null) facts.push(`Plan: ${status.plan}`)
-      if (status.account !== null) facts.push(status.account)
-      facts.push(...status.notes)
-      if (facts.length > 0) node.append(element("p", "provider-status-note", facts.join(" · ")))
-      for (const budget of status.budgets) node.append(budgetMeter(budget))
     }
   }
 
   if (advertised !== undefined) node.append(advertisedQuotas(advertised))
+  if (integration === "opendesign") node.append(openDesignConnect(status))
   return node
+}
+
+/** The connect card on its own, for a window with no recorded OpenDesign calls yet. */
+function emptyOpenDesignCard() {
+  const section = element("section", "provider-card")
+  const head = element("div", "provider-head")
+  head.append(element("span", "provider-name", "OpenDesign Go"), element("span", "provider-id", "opendesign"))
+  section.append(head)
+  section.append(openDesignConnect(lastQuotas?.results?.opendesign))
+  return section
+}
+
+/**
+ * The OpenDesign console session, connected from this page.
+ *
+ * OpenDesign's account API has no key-based access, so the only credential that
+ * reads the credit windows is the cookie a signed-in browser holds. The hard part
+ * is not storage, it is knowing what to copy, so the card spells out the three
+ * clicks and accepts whatever the browser gives you: a Cookie header, a whole
+ * Copy as cURL command, a fetch snippet, or a storage_state.json.
+ */
+function openDesignConnect(status) {
+  const card = element("div", "od-connect")
+  const connected = status !== undefined && status.state === "ok"
+  const head = element("div", "od-connect-head")
+  head.append(element("div", "od-connect-title", connected ? "Console session" : "Connect the console"))
+  card.append(head)
+
+  if (connected) {
+    const line = element("p", "provider-status-note")
+    line.textContent =
+      "Signed in to the OpenDesign console, so the windows above are the account's own figures."
+    card.append(line)
+    const disconnect = element("button", "button", "Disconnect")
+    disconnect.type = "button"
+    disconnect.addEventListener("click", () => void saveOpenDesignSession(null, disconnect))
+    card.append(disconnect)
+    return card
+  }
+
+  const why = element("p", "provider-status-note")
+  why.textContent =
+    "OpenDesign reads usage with the console's session cookie, not the API key. You only need " +
+    "to copy it once; it is saved beside the usage database and renewed on its own."
+  card.append(why, openDesignSteps())
+
+  const input = element("textarea", "od-connect-input")
+  input.rows = 4
+  input.placeholder = "Paste here — Cookie header, Copy as cURL, or storage_state.json"
+  input.spellcheck = false
+  input.setAttribute("aria-label", "OpenDesign console session")
+
+  const file = element("input", "")
+  file.type = "file"
+  file.accept = ".json,application/json,text/plain"
+  file.addEventListener("change", async () => {
+    const chosen = file.files?.[0]
+    if (!chosen) return
+    try {
+      input.value = await chosen.text()
+      setOdError(card, null)
+    } catch {
+      setOdError(card, "That file could not be read.")
+    }
+  })
+
+  const actions = element("div", "od-connect-actions")
+  const connect = element("button", "button", "Connect")
+  connect.type = "button"
+  connect.addEventListener("click", () => void saveOpenDesignSession(input.value, connect))
+  const label = element("label", "od-connect-pick")
+  label.append(file, element("span", "", "Choose file"))
+  actions.append(connect, label)
+  card.append(input, actions)
+  return card
+}
+
+/**
+ * The instructions, in the order the clicks happen.
+ *
+ * A numbered list rather than a paragraph: this is the one step people get stuck
+ * on, and "Network tab → any row → Copy as cURL" is shorter to follow than a
+ * description of what a cookie header is.
+ */
+function openDesignSteps() {
+  const list = element("ol", "od-steps")
+  const steps = [
+    ["Open the console", "and sign in: open-design.ai/cloud"],
+    [
+      "Open DevTools",
+      "Network tab — F12, or Cmd/Ctrl+Shift+I, then the Network tab",
+    ],
+    [
+      "Reload the page",
+      "so the requests appear; click any row whose name starts with /api/v1",
+    ],
+    [
+      "Copy it",
+      "right-click that row → Copy → Copy as cURL (or Copy request headers and paste the",
+      "cookie: line)",
+    ],
+  ]
+  for (const [title, ...rest] of steps) {
+    const item = document.createElement("li")
+    item.append(element("strong", "", title))
+    item.append(document.createTextNode(" — " + rest.join(" ")))
+    list.append(item)
+  }
+  const footnote = element(
+    "p",
+    "provider-status-note od-steps-note",
+    "Anything that came from a request to amr-api.open-design.ai works: the whole cURL command, " +
+      "just the cookie line, or a saved storage_state.json. Pasting it here is the only way it " +
+      "is ever read — it is stored 0600 beside the usage database and never sent anywhere else.",
+  )
+  list.append(footnote)
+  return list
+}
+
+function setOdError(card, message) {
+  card.querySelector(".od-connect-error")?.remove()
+  if (message === null) return
+  const note = element("p", "od-connect-error", message)
+  card.append(note)
+}
+
+/** POST the pasted session, or DELETE when `value` is null. */
+async function saveOpenDesignSession(value, button) {
+  const card = button.closest(".od-connect")
+  if (card !== null) setOdError(card, null)
+  button.disabled = true
+  try {
+    const response = await fetch(new URL("opendesign/session", API_BASE), {
+      method: value === null ? "DELETE" : "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: value === null ? undefined : JSON.stringify({ session: value }),
+    })
+    const body = await response.json().catch(() => null)
+    if (!response.ok) {
+      if (card !== null) setOdError(card, body?.error ?? `Could not connect (${response.status}).`)
+      return
+    }
+    // The dashboard re-reads quotas on refresh, so this is the whole update.
+    await refresh()
+  } catch (error) {
+    if (card !== null) setOdError(card, error instanceof Error ? error.message : "Could not reach the server.")
+  } finally {
+    button.disabled = false
+  }
 }
 
 // The advertised allowance and the window percentages, each with the dollars it
@@ -1525,9 +1683,14 @@ function advertisedWindow(window) {
     row.append(bar)
   }
 
-  // The published cap, and what the percentage works out to in dollars.
+  // The published cap, and what the percentage works out to in dollars. A
+  // provider that reports its own limit in credits gets that too, in its unit:
+  // the two are not the same number and showing one as the other misstates the
+  // allowance by orders of magnitude.
   const parts = []
   if (window.capUSD !== null) parts.push(`cap $${formatNumber(window.capUSD)}`)
+  if (window.capCredits !== null && window.capCredits !== undefined)
+    parts.push(`${formatInt(window.capCredits)} credits`)
   if (window.upstreamUSD !== null) parts.push(`≈$${formatMoney(window.upstreamUSD)} used`)
   if (window.resetsAt !== null) parts.push(`resets ${relativeTime(window.resetsAt)}`)
   if (parts.length > 0) row.append(element("div", "quota-reset", parts.join(" · ")))

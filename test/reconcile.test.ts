@@ -72,7 +72,7 @@ describe("the live plans file", () => {
    * windows made the dashboard's API-list figure read $12 for work the
    * provider charged $15.
    */
-  const file = "/opencode2-state/data/opencode/usage-plans.json"
+  const file = "/data/opencode/usage-plans.json"
 
   test("declares DeepSeek peak windows for the clock-metered plans", () => {
     if (!existsSync(file)) return

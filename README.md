@@ -12,7 +12,7 @@ Register the directory in `opencode.json`:
 {
   "plugins": [
     {
-      "package": "/config/workspace/opencode2-usage",
+      "package": "/path/to/opencode2-usage",
       "options": { "dbPath": "/tmp/opencode-usage.db" }
     }
   ]
@@ -299,9 +299,16 @@ bun run web --db ./usage.db --sessions-db ./opencode.db
 | `--sessions-db <path>` | `OPENCODE_DB`, then newest `opencode*.db` | Authoritative path. |
 | `--plans <path>` | `OPENCODE_USAGE_PLANS`, then `usage-plans.json` beside the sidecar | Fixed-fee plan prices. |
 
+Two environment variables have no flag because they are credentials, not layout:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OPENCODE_USAGE_OD_SESSION` | `open-design-session.json` beside the sidecar | Where the OpenDesign console cookie lives. |
+| `OPENCODE_USAGE_OD_API` | `https://amr-api.open-design.ai/api` | The console API origin. Only for pointing a test at a stand-in. |
+
 Both databases are opened `{ readonly: true }` for each request and closed immediately, so new recorded calls show up on refresh without restarting the server.
 
-The server runs the code it loaded at startup. After changing `web/` or `src/`, restart it — a long-running process keeps serving the old routes even though `web/public/` is read from disk on every request, which makes an upgrade look like a page bug. `GET /api/meta` returns a `capabilities` list of the routes the running build serves, and the page checks it **per view** before calling anything: `usage` needs the core series routes, `providers` needs `providers` and `quotas`, and `rates` needs `rates`. A server that predates this list, or one missing a route a view needs, shows that view an explicit "server is out of date" banner naming the restart command instead of a bare `unknown endpoint` — and the other views keep working. Gating the whole page on the union of every route meant adding a new tab could lock you out of pages the old server still served perfectly well. This is the actual failure mode behind that error: the dashboard runs as the `opencode2-usage` container on port 4599, so `docker restart opencode2-usage` after a change, not just `bun run web`.
+The server runs the code it loaded at startup. After changing `web/` or `src/`, restart it — a long-running process keeps serving the old routes even though `web/public/` is read from disk on every request, which makes an upgrade look like a page bug. `GET /api/meta` returns a `capabilities` list of the routes the running build serves, and the page checks it **per view** before calling anything: `usage` needs the core series routes, `providers` needs `providers`, `quotas`, and `opendesign-session`, and `rates` needs `rates`. A server that predates this list, or one missing a route a view needs, shows that view an explicit "server is out of date" banner naming the restart command instead of a bare `unknown endpoint` — and the other views keep working. Gating the whole page on the union of every route meant adding a new tab could lock you out of pages the old server still served perfectly well. This is the actual failure mode behind that error: a long-running sidecar process keeps serving the old routes, so restart it after a change, not just `bun run web`.
 
 ### Endpoints
 
@@ -380,13 +387,15 @@ A percentage on its own is hard to act on, so each provider's published limits s
 
 **OpenCode Go** — $10/month. Windows are *shares* of a per-model monthly allowance: 20% per 5 hours, 50% per week, 100% per month. DeepSeek V4.1 Flash has an $80 monthly allowance, so the caps are $16 / $40 / $80. Source: `packages/console/app/src/component/go-models.ts` and `go.faq.a9` in the Console's `i18n/en.ts`.
 
-**OpenDesign Go** — $10/month ($8 first month). Windows are *fixed dollar caps*: $10 per 5 hours, $30 per 7 days, $120 per month, against a $120 monthly credit pool. Source: <https://open-design.ai/model-credits/>.
+**OpenDesign Go** — $10/month ($8 first month). Windows are *fixed caps*: $18 per 5 hours, $55 per 7 days, $220 per month. Source: <https://open-design.ai/model-credits/>, and confirmed against a live account: the console reports those windows as 50,000 and 150,000 credits, and repricing this machine's own calls at the console card puts the rate at 2,729 credits per dollar — $18.33 and $54.96, which is the published pair to within a rounding step.
+
+A connected console session overrides all three figures anyway: `coding-plan-usage` reports each window's own `limitCredits`, and `advertisedQuota` prefers that over this table.
 
 Each window shows the published cap and the percentage converted to dollars, plus an optional reset time when the upstream reports one.
 
 ### Credits are the console's own per-token card
 
-OpenDesign publishes a per-model credit multiplier: 0.5× for DeepSeek V4.1 Flash, 1× for most models, 2× for Claude Haiku 5.5 and GLM-5.3 Flash-X, 4× for GPT-6 Luna. That multiplier is an **entitlement**, not a per-call discount: a lower multiplier means the same pool buys *more* usage. Inverting the published figure (`credits = 2 × usage × multiplier`) reproduces the monthly usage column exactly — $120 at 0.5×, $60 at 1×, $30 at 2×, $15 at 4×.
+OpenDesign publishes a per-model credit multiplier: 0.5× for DeepSeek V4.1 Flash, 1× for most models, 2× for Claude Haiku 5.5 and GLM-5.3 Flash-X, 4× for GPT-6 Luna. That multiplier is an **entitlement**, not a per-call discount: a lower multiplier means the same pool buys *more* usage. Inverting the published figure (`credits = 2 × usage × multiplier`) reproduces the monthly usage column exactly — $220 at 0.5×, $110 at 1×, $55 at 2×, $27.50 at 4×.
 
 The meter is separate. The console's "Credit usage breakdown" popup prices a call from its tokens at a flat card:
 
@@ -458,15 +467,15 @@ Three rules keep this honest:
 Two smaller cases are labelled rather than guessed:
 
 - **Mixed models.** Go publishes an allowance per model, not one pool. When a window mixed models with different allowances there is no single figure the percentage refers to, so the dollars use the model that spent the most and the panel says `Estimate:`.
-- **No usage API.** OpenDesign publishes limits but no usage endpoint, so its caps are shown without percentages, with a note saying live percentages are unavailable.
+- **Connect the console.** OpenDesign reports no usage to an API key, so the Providers page has a connect card for the console session cookie instead. See [OpenDesign console session](#opendesign-console-session).
 
 A model the plan does not publish is counted at 1× so the total is never understated, and is named in the panel. A free model with no recorded cost is skipped instead of being reported as unknown, and promotional Go models (`beam-free`, `iceman-contributor-free`) are excluded from credits and shown separately as unmetered.
 
-The other two providers expose no usage API and are reported as such rather than hidden: Command Code serves only `/provider/v1/models` and returns 404 on every account, usage, balance, and billing path tried; OpenDesign reports tokens per response but exposes no account or balance endpoint (its `/v1/*` inference API works, and every `amr-api.open-design.ai/api/v1/*` account path returns 401).
+Command Code exposes no usage API worth reading: it serves only `/provider/v1/models` and returns 404 on every account, usage, balance, and billing path tried, so it is reported as `unsupported` rather than hidden.
 
-Credentials are read from the `credential` table of the authoritative database, which the dashboard already opens read-only, so status works without a running OpenCode server. Only the active credential per integration is used. Because OpenCode records Go traffic under the provider id `opencode-go` while the credential belongs to the `opencode` integration, `src/quota-source.ts` maps between them explicitly in `PROVIDER_ALIASES` rather than guessing by prefix.
+Credentials are read from the `credential` table of the authoritative database, which the dashboard already opens read-only, so status works without a running OpenCode server. Only the active credential per integration is used. Because OpenCode records Go traffic under the provider id `opencode-go` while the credential belongs to the `opencode` integration, `src/quota-source.ts` maps between them explicitly in `PROVIDER_ALIASES` rather than guessing by prefix. OpenDesign is the exception: its credential is a cookie this dashboard stores itself, never the `credential` table.
 
-A provider's status is one of `ok`, `unsupported` (no API to read), `missing` (no usable credential), or `error` (the call failed or the response did not parse). An expired or revoked token reports as `error` with a message asking you to reconnect it; the token itself never reaches the browser, and no response body from a failing call is echoed back.
+A provider's status is one of `ok`, `unsupported` (no API to read), `missing` (no usable credential), or `error` (the call failed or the response did not parse). An expired or revoked token reports as `error` with a message asking you to reconnect it; the token itself never reaches the browser, and no response body from a failing call is echoed back. OpenDesign reports `missing` until its console session is connected, which is why the page shows a connect card rather than a dead end.
 
 The page writes its view to the URL (`since`, `q`, `model`, sorts, call/round paging offsets, round status, errors-only, error source, the `view`, the selected `provider` tab, and the open `session` or `turn` panel), so views are linkable and the back button works. Internal-test rows only appear when the checkbox is enabled, and are marked `test`. When the sidecar is missing or empty, a banner states that every metric comes from recorded calls.
 
@@ -519,7 +528,7 @@ bun test
 bun verify/run.ts
 ```
 
-`bun verify/run.ts` starts the mock provider and an isolated OpenCode server with every XDG directory under `/tmp/oc2-usage-verify`, drives rounds with controllable failure modes, restarts the server, and asserts the sidecar rows. It never touches the live service or `/opencode2-state`.
+`bun verify/run.ts` starts the mock provider and an isolated OpenCode server with every XDG directory under `/tmp/oc2-usage-verify`, drives rounds with controllable failure modes, restarts the server, and asserts the sidecar rows. Nothing outside `/tmp/oc2-usage-verify` is touched.
 
 The mock provider fails the first attempt of a prompt containing `[[fail:429]]` with a 429 and `Retry-After: 1`, then streams normally so the retry succeeds. A prompt containing `[[fail:500]]` returns 500 with `x-should-retry: false`, so OpenCode classifies it as `provider.internal` and does not spend its default retry budget on the harness.
 
@@ -557,6 +566,54 @@ That produces the same practical answer, but for a different reason than the old
 - Command Code and OpenCode Go are identical in every column — same fee, same allowance, same metering.
 
 **A caveat on the books.** OpenCode's recorded `cost` column applies a *static off-peak rate table at every hour*, so it understates CC and Go spend by whatever the peak surcharge should have been. The dashboard's `API list` figure applies the peak windows and is the one to trust for those two. OpenDesign is different: its Usage and Provider dollars are now repriced at the console card, so they match the meter directly.
+
+### OpenDesign console session
+
+OpenDesign's inference API takes the `sk-amr-…` key, but its **account** API does not: every `amr-api.open-design.ai/api/v1/*` path answers `401 {"error":"unauthenticated"}` to a key. The only credential that reads the Design Plan windows is the session cookie a signed-in browser holds, and the console's login is behind Turnstile, so no script can produce one.
+
+The Providers page therefore asks you to copy it once. On the OpenDesign tab:
+
+1. Sign in at <https://open-design.ai/cloud>.
+2. Open DevTools (F12) → **Network** tab, and reload the page.
+3. Click any row whose name starts with `/api/v1`.
+4. Right-click that row → **Copy** → **Copy as cURL**.
+5. Paste it into the card and press **Connect**.
+
+The card also accepts, because they are all things people naturally copy:
+
+- just the `cookie:` line from **Copy request headers**
+- a bare `a=1; b=2` header
+- a **Copy as fetch** snippet
+- a Playwright `storage_state.json` (the **Choose file** button)
+
+The server verifies the cookie against `GET /v1/workspaces/current` and the workspace's `billing/coding-plan-usage` **before** storing anything, so a bad paste costs a message rather than a broken dashboard. On success:
+
+- The cookies are written to `open-design-session.json` beside the sidecar, mode `0600`, atomically. A crash mid-write leaves the previous session intact.
+- Any `Set-Cookie` the console returns is applied and written back, so a session it slides forward stays alive without re-pasting. A cookie cleared with `Max-Age=0` or a past `Expires` is deleted instead.
+- The quota cache is invalidated, so the windows appear on the next render.
+
+**Disconnect** deletes the file. `GET`/`POST`/`DELETE /api/opendesign/session` is the whole surface.
+
+Two safeguards, because this is the one write route on an otherwise read-only dashboard:
+
+- The server already refuses to bind anywhere but loopback unless `--host 0.0.0.0` was passed explicitly, and it says so at startup.
+- A `POST` from another site's origin is rejected with 403. A `Cookie` header cannot be set by a cross-origin `fetch` in the first place, so the check is belt-and-braces rather than the primary defence.
+
+The cookie is never returned to the browser and never echoed in an error. Only parsed readings reach the page: the percentages, the account name, and the plan tier.
+
+Which endpoints are read, all from the console's own bundle:
+
+| Call | What it supplies |
+| --- | --- |
+| `GET /v1/workspaces/current` | The workspace id the other calls are scoped to |
+| `GET /v1/workspaces/:id/billing/coding-plan-usage` | The Design Plan windows (`durationSeconds`, `usedCredits`, `limitCredits`, `resetsAt`) and the plan tier |
+| `GET /v1/workspaces/:id/wallet/balance` | A wallet balance note, if the workspace has one |
+
+They are undocumented and carry no compatibility promise; a rename shows up as an `error` state naming the failing path rather than as silently zero usage. `src/od-source.ts` parses them, and `test/od-source.test.ts` pins both shapes (the coding-plan response's `durationSeconds` and the billing snapshot's `kind`) so a change surfaces in CI.
+
+`OPENCODE_USAGE_OD_SESSION` overrides the session file path, which is how the tests and a second deployment keep their sessions apart. It defaults to sitting beside the sidecar, so a container that already persists the sidecar directory keeps the session across restarts; if that directory is mounted read-only, point this at a writable path.
+
+`OPENCODE_USAGE_OD_API` overrides the console's API origin. It exists so the tests can point the same code at a local stand-in; there is no reason to set it otherwise.
 
 ### Reconciling OpenDesign
 

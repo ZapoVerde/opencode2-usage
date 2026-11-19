@@ -4,3 +4,6 @@ node_modules/
 *.db-wal
 *.log
 .DS_Store
+# A pasted console cookie; never commit it.
+open-design-session.json
+usage-plans.json

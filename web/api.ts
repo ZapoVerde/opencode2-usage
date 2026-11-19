@@ -127,6 +127,8 @@ class HttpError extends Error {
 /**
  * Routes this build serves. Kept beside the dispatcher so adding a route means
  * touching one list rather than remembering a second place to declare it.
+ * `opendesign-session` is served by the web server itself rather than the
+ * dispatcher, because it needs the network and a file write.
  */
 const ENDPOINT_CAPABILITIES = [
   "meta",
@@ -140,6 +142,7 @@ const ENDPOINT_CAPABILITIES = [
   "providers",
   "rates",
   "quotas",
+  "opendesign-session",
 ] as const
 
 export function handleApi(

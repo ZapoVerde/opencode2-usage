@@ -57,12 +57,15 @@ describe("advertised plan data", () => {
   test("OpenDesign Go matches the published credit table", () => {
     const od = plan("opendesign")
     expect(od.monthlyUSD).toBe(10)
-    expect(od.monthlyCreditsUSD).toBe(120)
-    // $10 per 5 hours, $30 per 7 days, $120 per month.
+    // Go's console reports 50,000 credits per 5 hours and 150,000 per 7 days,
+    // and 2,729 credits per dollar prices those at $18.33 and $54.96. The
+    // published pair is $18 and $55; the monthly figure follows from the same
+    // rate ($220 is 600,000 credits).
+    expect(od.monthlyCreditsUSD).toBe(220)
     expect(od.windows.map((window) => [window.id, window.capUSD])).toEqual([
-      ["rolling", 10],
-      ["weekly", 30],
-      ["monthly", 120],
+      ["rolling", 18],
+      ["weekly", 55],
+      ["monthly", 220],
     ])
   })
 
@@ -84,7 +87,7 @@ describe("model multipliers", () => {
     const od = plan("opendesign")
     expect(modelMultiplier(od, "deepseek-v4.1-flash")).toBe(0.5)
     expect(modelMultiplier(od, "deepseek-v4-pro")).toBe(1)
-    expect(modelMultiplier(od, "claude-haiku-5.5")).toBe(2)
+    expect(modelMultiplier(od, "claude-haiku-5.5")).toBe(4)
     expect(modelMultiplier(od, "glm-5.3-flashx")).toBe(2)
     expect(modelMultiplier(od, "gpt-6-luna")).toBe(4)
   })
@@ -178,9 +181,9 @@ describe("windowCap", () => {
     const od = plan("opendesign")
     const rolling = od.windows.find((window) => window.id === "rolling")
     if (rolling === undefined) throw new Error("missing window")
-    expect(windowCap(rolling, 120)).toBe(10)
+    expect(windowCap(rolling, 220)).toBe(18)
     // A fixed cap does not depend on the monthly allowance at all.
-    expect(windowCap(rolling, null)).toBe(10)
+    expect(windowCap(rolling, null)).toBe(18)
   })
 
   test("returns null when a share window has no allowance", () => {
@@ -200,11 +203,34 @@ describe("advertisedQuota", () => {
       live: [],
     })
     if (quota === null) throw new Error("expected a quota")
-    expect(quota.allowanceUSD).toBe(120)
+    expect(quota.allowanceUSD).toBe(220)
     expect(quota.recordedUSD).toBeCloseTo(0.4, 8)
     // 1M uncached input at the console's $0.44/M.
     expect(quota.creditsUSD).toBeCloseTo(0.44, 9)
-    expect(quota.windows.map((window) => window.capUSD)).toEqual([10, 30, 120])
+    expect(quota.windows.map((window) => window.capUSD)).toEqual([18, 55, 220])
+  })
+
+  test("carries the console's own window limit alongside the published cap", () => {
+    // The console reports its limits in credits (50,000 and 150,000 for Go), not
+    // dollars. Treating those as dollars put "$50,000" beside "$18" for the same
+    // window, so the credit figure travels separately and the page shows both.
+    const quota = advertisedQuota({
+      integrationID: "opendesign",
+      models: ["deepseek-v4.1-flash"],
+      spend: [],
+      live: [
+        { id: "rolling", usedPercent: 50, resetsAt: null, capCredits: 50000 },
+        { id: "weekly", usedPercent: 50, resetsAt: null, capCredits: 150000 },
+      ],
+    })
+    if (quota === null) throw new Error("expected a quota")
+    const rolling = quota.windows.find((window) => window.id === "rolling")
+    // The dollar cap stays the published one; the credit limit is its own field.
+    expect(rolling?.capUSD).toBe(18)
+    expect(rolling?.capCredits).toBe(50000)
+    // Dollars used still come from the published cap, not from the credits.
+    expect(rolling?.upstreamUSD).toBeCloseTo(9, 9)
+    expect(quota.windows.find((window) => window.id === "monthly")?.capUSD).toBe(220)
   })
 
   test("turns a Go percentage into dollars against the model allowance", () => {

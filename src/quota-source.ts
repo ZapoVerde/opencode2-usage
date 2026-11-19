@@ -12,6 +12,8 @@
 
 import { parseConsoleBudgets, parseGoUsage, parseOpenAIUsage, type ProviderQuotaStatus } from "./quotas"
 import type { CredentialRecord } from "./read"
+import { readOpenDesign } from "./od-source"
+import type { StoredCookie } from "./od-session"
 
 const REQUEST_TIMEOUT_MS = 8_000
 const OPENCODE_CONSOLE = "https://opencode.ai/console"
@@ -24,6 +26,17 @@ type Credential = CredentialRecord
 
 export type QuotaSources = {
   readonly credentials: readonly Credential[]
+  /**
+   * OpenDesign has no API key that reads account usage: the console's own
+   * endpoints need the session cookie a signed-in browser holds. It arrives
+   * separately from `credentials` because it is not a stored OpenCode
+   * credential and only this dashboard knows where it lives.
+   */
+  readonly openDesign?: {
+    readonly cookies: readonly StoredCookie[]
+    /** Called when the console rotates the session, so the new value is kept. */
+    readonly onRotate: (cookies: readonly StoredCookie[]) => void
+  }
 }
 
 /**
@@ -52,12 +65,24 @@ export async function readQuotas(sources: QuotaSources): Promise<Record<string, 
       state: "unsupported",
       reason: "Command Code publishes a model list but no usage or balance API",
     }),
-    Promise.resolve<ProviderQuotaStatus>({
-      state: "unsupported",
-      reason: "OpenDesign reports tokens per response but no usage or balance API",
-    }),
+    openDesignStatus(sources.openDesign),
   ])
   return { opencode, openai, commandcode, opendesign }
+}
+
+/**
+ * OpenDesign, from the console session cookie.
+ *
+ * Without a stored session the provider is `missing` rather than `unsupported`:
+ * the API exists and the dashboard can read it, it just needs the browser's
+ * cookie. Saying which of those it is tells you whether connecting will help.
+ */
+async function openDesignStatus(session: QuotaSources["openDesign"]): Promise<ProviderQuotaStatus> {
+  if (session === undefined || session.cookies.length === 0)
+    return { state: "missing", reason: "No OpenDesign console session is connected" }
+  const reading = await readOpenDesign(session.cookies)
+  if (reading.rotated !== null) session.onRotate(reading.rotated)
+  return reading.status
 }
 
 /**

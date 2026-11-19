@@ -1260,9 +1260,9 @@ describe("endpoint capabilities", () => {
   test("every advertised capability is routable", () => {
     const meta = bodyOf<Meta>(api("/api/meta", "since=7d"))
     for (const endpoint of meta.capabilities) {
-      // `quotas` needs network I/O, so the HTTP layer answers it before the
-      // dispatcher; it is covered by the quota tests instead.
-      if (endpoint === "quotas") continue
+      // These two need network I/O or a file write, so the HTTP layer answers
+      // them before the dispatcher; they are covered by their own tests.
+      if (endpoint === "quotas" || endpoint === "opendesign-session") continue
       // Every route here answers without an id; the session and turn detail
       // routes are not in the list.
       expect(api(`/api/${endpoint}`, "since=7d").status).not.toBe(404)

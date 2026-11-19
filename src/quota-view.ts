@@ -73,6 +73,8 @@ export function advertisedQuota(input: {
     readonly id: string
     readonly usedPercent: number | null
     readonly resetsAt: number | null
+    /** The cap in the provider's own credit unit, when it reports one. */
+    readonly capCredits?: number | null
   }[]
 }): AdvertisedQuota | null {
   const plan = advertisedPlan(input.integrationID)
@@ -83,6 +85,13 @@ export function advertisedQuota(input: {
   const allowanceUSD = plan.monthlyCreditsUSD ?? dominant?.monthlyUSD ?? null
   const livePercent = new Map(input.live.map((window) => [window.id, window.usedPercent] as const))
   const liveReset = new Map(input.live.map((window) => [window.id, window.resetsAt] as const))
+  const liveCap = new Map(
+    input.live.flatMap((window) =>
+      typeof window.capCredits === "number" && Number.isFinite(window.capCredits)
+        ? [[window.id, window.capCredits] as const]
+        : [],
+    ),
+  )
 
   return {
     providerID: plan.providerID,
@@ -106,6 +115,10 @@ export function advertisedQuota(input: {
         label: window.label,
         kind: window.kind,
         capUSD,
+        // The provider's own limit, kept in its unit. OpenDesign reports it in
+        // credits; turning that into dollars needs a rate it does not publish,
+        // so both are carried and the page shows whichever it was given.
+        capCredits: liveCap.get(window.id) ?? null,
         // The upstream percentage is of the account's whole allowance, so its
         // dollar value is the percentage of the cap.
         upstreamPercent: percent,

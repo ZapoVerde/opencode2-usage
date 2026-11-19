@@ -12,8 +12,11 @@ import { startMockProvider } from "./mock-provider"
 import type { CallRow } from "../src/reducer"
 import { openStore } from "../src/store"
 
-const CLI_DIR = "/config/workspace/opencode2/packages/cli"
-const PLUGIN_DIR = "/config/workspace/opencode2-usage"
+// Point OPENCODE_CHECKOUT at an opencode source tree to run the end-to-end check.
+const CLI_DIR = process.env.OPENCODE_CHECKOUT
+  ? path.join(process.env.OPENCODE_CHECKOUT, "packages/cli")
+  : path.resolve(import.meta.dir, "../packages/cli")
+const PLUGIN_DIR = path.resolve(import.meta.dir, "..")
 const PLUGIN_ID = "opencode2-usage"
 const PASSWORD = "oc2-usage-verify"
 const ROOT = "/tmp/oc2-usage-verify"

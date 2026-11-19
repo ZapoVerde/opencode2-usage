@@ -154,14 +154,24 @@ const GO_MODELS: readonly PlanModel[] = [
  * OpenDesign Go.
  *
  * Source: <https://open-design.ai/model-credits/> — "Credits by plan" gives Go
- * a $120 monthly maximum with $30 per 7-day window and $10 per 5-hour window,
+ * a $220 monthly maximum with $55 per 7-day window and $18 per 5-hour window,
  * and "Design Plan models and credit multipliers" gives the per-model multiplier.
  * <https://open-design.ai/pricing/> prices Go at $10/month ($8 first month).
  *
+ * Confirmed against a live account rather than the page alone. The console
+ * reports Go's windows as 50,000 credits per 5 hours and 150,000 per 7 days, and
+ * repricing this machine's own recorded calls at the console card puts the rate
+ * at 2,729 credits per dollar. Inverting it gives $18.33 and $54.96 — the
+ * published pair to within a rounding step — and $220 for the month.
+ *
+ * The table is still only a fallback. `coding-plan-usage` reports each window's
+ * own limit, and `advertisedQuota` prefers that live cap, so a change to this
+ * plan needs no edit here.
+ *
  * The multipliers are what make the pricing page add up: DeepSeek V4.1 Flash
- * lists $120 of monthly usage against a $60 base while every 1× model lists $60.
- * A 0.5× multiplier consumes half a credit per list dollar, so the same credit
- * pool reaches twice as far. That is the whole of the "0.5" on DeepSeek.
+ * lists $220 of monthly usage against a $110 base while every 1× model lists
+ * $110. A 0.5× multiplier consumes half a credit per list dollar, so the same
+ * credit pool reaches twice as far. That is the whole of the "0.5" on DeepSeek.
  *
  * The credit price of a token is the console's own card — input $0.44/M, output
  * $1.32/M, cache read $0.014/M, cache write $0.44/M — taken from the "Credit
@@ -171,9 +181,9 @@ const GO_MODELS: readonly PlanModel[] = [
  * be computed from tokens at this card, not from a blended recorded dollar.
  */
 const OD_WINDOWS: readonly QuotaWindow[] = [
-  { id: "rolling", label: "5-hour", kind: "cap", share: null, capUSD: 10 },
-  { id: "weekly", label: "7-day", kind: "cap", share: null, capUSD: 30 },
-  { id: "monthly", label: "Monthly", kind: "cap", share: null, capUSD: 120 },
+  { id: "rolling", label: "5-hour", kind: "cap", share: null, capUSD: 18 },
+  { id: "weekly", label: "7-day", kind: "cap", share: null, capUSD: 55 },
+  { id: "monthly", label: "Monthly", kind: "cap", share: null, capUSD: 220 },
 ]
 
 /**
@@ -209,7 +219,9 @@ const OD_MODELS: readonly PlanModel[] = [
   ["deepseek-v4-pro", "DeepSeek V4 Pro", 1],
   ["glm-5.3-flash", "GLM-5.3 Flash", 1],
   ["glm-5.3-flashx", "GLM-5.3 Flash-X", 2],
-  ["claude-haiku-5.5", "Claude Haiku 5.5", 2],
+  // The console's multiplier table lists Claude Haiku 5.5 at 4×, alongside
+  // GPT-6 Luna. It previously read 2× here.
+  ["claude-haiku-5.5", "Claude Haiku 5.5", 4],
   ["gpt-6-luna", "GPT-6 Luna", 4],
   ["kimi-k2.7-code", "Kimi K2.7 Code", 1],
   ["mimo-v2.6-flash", "MiMo V2.6 Flash", 1],
@@ -294,7 +306,7 @@ export const ADVERTISED_PLANS: readonly AdvertisedPlan[] = [
     providerID: "opendesign",
     label: "OpenDesign Go",
     monthlyUSD: 10,
-    monthlyCreditsUSD: 120,
+    monthlyCreditsUSD: 220,
     windows: OD_WINDOWS,
     models: OD_MODELS,
     // One published card at every hour: the console's per-token prices are the

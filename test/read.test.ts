@@ -56,9 +56,9 @@ describe("authoritative database selection", () => {
     const result = selectAuthoritativeDatabase({
       dataDirectory,
       candidates: [],
-      envPath: "/opencode2-state/data/opencode/opencode-local.db",
+      envPath: "/data/opencode/opencode-local.db",
     })
-    expect(result).toEqual({ ok: true, path: "/opencode2-state/data/opencode/opencode-local.db", source: "env" })
+    expect(result).toEqual({ ok: true, path: "/data/opencode/opencode-local.db", source: "env" })
   })
 
   test("a relative OPENCODE_DB resolves under the data directory", () => {

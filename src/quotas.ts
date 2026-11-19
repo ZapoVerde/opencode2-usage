@@ -23,6 +23,12 @@ export type QuotaWindow = {
   readonly limited: boolean
   /** Epoch ms when the window resets, or null when unknown. */
   readonly resetsAt: number | null
+  /**
+   * The window's cap in the provider's own credit unit, when the upstream says
+   * it. OpenDesign reports it, which is what keeps the percentage legible even
+   * when its published allowance changes.
+   */
+  readonly capCredits: number | null
 }
 
 /** A dollar-denominated budget, such as a Console policy. */
@@ -60,8 +66,18 @@ export type AdvertisedWindow = {
   readonly label: string
   /** A fraction of the monthly allowance, or a fixed dollar cap. */
   readonly kind: "share" | "cap"
-  /** The window's cap in dollars, or null when no allowance is known. */
+  /**
+   * The window's cap in dollars, from the published table.
+   *
+   * Not taken from the console: `coding-plan-usage` reports its limits in
+   * credits (50,000 and 150,000 for Go), and converting those to dollars needs a
+   * rate the console does not publish. Treating the credit count as dollars put
+   * "$50,000" next to "$18" for the same window. The credits are shown verbatim
+   * in `capCredits` instead.
+   */
   readonly capUSD: number | null
+  /** The provider's own window limit, in its credit unit, when it reports one. */
+  readonly capCredits: number | null
   /** Percent the provider reported for this window. */
   readonly upstreamPercent: number | null
   /**
@@ -169,6 +185,9 @@ export function parseGoUsage(body: unknown): ProviderQuotaStatus {
       usedPercent: percent(meter.percent),
       limited: meter.status === "rate-limited",
       resetsAt: timestamp(meter.resetsAt),
+      // Go publishes percentages only; its dollar allowance is per model and
+      // lives in the advertised table.
+      capCredits: null,
     })
   }
   if (windows.length === 0) return { state: "error", reason: "Go usage had no meters" }
@@ -225,6 +244,7 @@ export function parseOpenAIUsage(body: unknown): ProviderQuotaStatus {
       usedPercent: percent(window.used_percent),
       limited: rateLimit?.limit_reached === true,
       resetsAt: timestamp(window.reset_at),
+      capCredits: null,
     })
   }
 

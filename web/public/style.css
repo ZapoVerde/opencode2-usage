@@ -824,6 +824,105 @@ main {
   color: var(--warn);
 }
 
+/* Connecting the OpenDesign console: a paste target and two buttons, sized for a
+   phone's keyboard as much as a desktop's. */
+.od-connect {
+  max-width: 420px;
+  margin: 12px 0 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.od-connect-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.od-connect-title {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.od-connect-input {
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--input);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  resize: vertical;
+}
+
+.od-connect-input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.od-connect-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.od-connect-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.od-connect-pick input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.od-connect-pick:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.od-connect-error {
+  margin: 8px 0 0;
+  color: var(--bad);
+  font-size: 11.5px;
+}
+
+/* The copy instructions: this is the one step people get stuck on, so it is a
+   numbered list rather than a paragraph. */
+.od-steps {
+  margin: 8px 0 10px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.od-steps strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.od-steps-note {
+  list-style: none;
+  margin: 6px 0 0 -20px;
+  font-size: 11px;
+}
+
 .quota {
   display: grid;
   gap: 3px;
